@@ -1,0 +1,63 @@
+/* Design tokens - dashboard.md §5. Keep this the single source; don't
+   hardcode these values elsewhere in components. */
+
+:root {
+  /* Color */
+  --ink: #161a21;
+  --paper: #edefea;
+  --hairline: #d3d6cb;
+  --positive: #1f6f5c;
+  --negative: #b24b28;
+  --accent: #b98a2e;
+
+  /* Type */
+  --font-display: "Source Serif 4", serif; /* verdict sentence only */
+  --font-ui: "Inter", sans-serif;
+  --font-mono: "IBM Plex Mono", monospace; /* data / numerals */
+
+  /* Structure */
+  --radius: 0; /* sharp corners, no exceptions */
+  --border-width: 1px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-ui);
+}
+
+/* Shared primitives components can reach for instead of redefining these
+   rules inline everywhere. */
+
+.kt-hairline {
+  border: var(--border-width) solid var(--hairline);
+}
+
+.kt-mono {
+  font-family: var(--font-mono);
+}
+
+.kt-display {
+  font-family: var(--font-display); /* reserve for the verdict sentence only */
+}
+
+.kt-positive {
+  color: var(--positive);
+}
+
+.kt-negative {
+  color: var(--negative);
+}
+
+.kt-accent {
+  color: var(--accent);
+}
+
+/* Motion is reserved for the pipeline-status reveal only - nothing else
+   animates on load (dashboard.md §5). If you need a transition anywhere
+   else, that's a signal to stop and re-check the spec first. */
