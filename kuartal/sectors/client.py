@@ -4,13 +4,13 @@ Lightweight GET client for the Sectors API.
 Responsible for authentication headers and request retries. Endpoint-specific
 logic is handled separately in `endpoints.py`.
 """
+
 from __future__ import annotations
+from typing import Any
+from kuartal.config import settings
 
 import time
 import httpx
-
-from typing import Any
-from kuartal.config import settings
 
 class SectorsAPIError(RuntimeError):
     """Raised when the Sectors API returns a non-2xx response after all retries."""
