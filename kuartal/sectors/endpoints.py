@@ -7,6 +7,7 @@ request and response handling kept separate from the underlying API client.
 
 from __future__ import annotations
 from typing import Any
+from kuartal.pipeline.compute import QuarterFinancial
 from kuartal.sectors.client import SectorsClient
 
 def get_quarterly_financial_dates(client: SectorsClient, ticker: str) -> list[str]:
@@ -15,7 +16,7 @@ def get_quarterly_financial_dates(client: SectorsClient, ticker: str) -> list[st
     data = client.get(f"/company/get_quarterly_financial_dates/{ticker}/")
     return data.get("dates", [])
 
-def get_quarterly_financials(client: SectorsClient, ticker: str) -> list[dict[str, Any]]:
+def get_quarterly_financials(client: SectorsClient, ticker: str) -> list[QuarterFinancial]:
     """Own-trend input: retrieves trailing quarterly revenue and earnings history."""
 
     data = client.get(f"/financials/quarterly/{ticker}/")

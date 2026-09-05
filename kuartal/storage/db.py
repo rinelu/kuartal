@@ -7,22 +7,37 @@ No ORM is needed for the small schema.
 
 from __future__ import annotations
 from kuartal.config import settings
-from kuartal.storage.models import LastSeenReport, Watchlist
+from kuartal.storage.models import LastSeenReport, VerdictLogEntry, Watchlist
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS watchlist (
-    ticker TEXT PRIMARY KEY,
+    ticker TEXT NOT NULL,
     sector TEXT NOT NULL,
-    added_at TEXT NOT NULL
+    added_at TEXT NOT NULL,
+    user TEXT NOT NULL DEFAULT 'default',
+    PRIMARY KEY (ticker, user)
 );
 
 CREATE TABLE IF NOT EXISTS last_seen_report (
-    ticker TEXT PRIMARY KEY REFERENCES watchlist(ticker),
+    ticker TEXT PRIMARY KEY,
     period TEXT NOT NULL,
     seen_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS verdict_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT NOT NULL,
+    quarter TEXT NOT NULL,
+    verdict TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    percentile INTEGER NOT NULL,
+    delivered_at TEXT,
+    opened INTEGER NOT NULL DEFAULT 0,
+    time_to_verdict TEXT NOT NULL DEFAULT '',
+    UNIQUE(ticker, quarter)
 );
 """
 
@@ -35,20 +50,40 @@ class Database:
 
     # --- Watchlist ---
 
-    def add_ticker(self, ticker: str, sector: str) -> None:
+    def add_ticker(self, ticker: str, sector: str, user: str = "default") -> None:
         self._conn.execute(
-            "INSERT OR IGNORE INTO watchlist (ticker, sector, added_at) VALUES (?, ?, ?)",
-            (ticker, sector, datetime.utcnow().isoformat()),
+            "INSERT OR IGNORE INTO watchlist (ticker, sector, added_at, user) VALUES (?, ?, ?, ?)",
+            (ticker, sector, datetime.now(timezone.utc).isoformat(), user),
         )
         self._conn.commit()
 
-    def remove_ticker(self, ticker: str) -> None:
-        self._conn.execute("DELETE FROM watchlist WHERE ticker = ?", (ticker,))
+    def remove_ticker(self, ticker: str, user: str = "default") -> None:
+        self._conn.execute("DELETE FROM watchlist WHERE ticker = ? AND user = ?", (ticker, user))
         self._conn.commit()
 
-    def list_watchlist(self) -> list[Watchlist]:
-        rows = self._conn.execute("SELECT ticker, sector, added_at FROM watchlist").fetchall()
-        return [ Watchlist(ticker=r[0], sector=r[1], added_at=datetime.fromisoformat(r[2])) for r in rows ]
+    def list_watchlist(self, user: str | None = None) -> list[Watchlist]:
+        if user is None:
+            rows = self._conn.execute("SELECT ticker, sector, added_at, user FROM watchlist").fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT ticker, sector, added_at, user FROM watchlist WHERE user = ?", (user,)
+            ).fetchall()
+        return [
+            Watchlist(ticker=r[0], sector=r[1], added_at=datetime.fromisoformat(r[2]), user=r[3])
+            for r in rows
+        ]
+
+    def list_watched_tickers(self) -> list[str]:
+        """Distinct tickers across all users - what the scheduler polls."""
+
+        rows = self._conn.execute("SELECT DISTINCT ticker FROM watchlist").fetchall()
+        return [r[0] for r in rows]
+
+    def list_users_for_ticker(self, ticker: str) -> list[str]:
+        """Users watching `ticker`, for per-user delivery routing."""
+
+        rows = self._conn.execute("SELECT user FROM watchlist WHERE ticker = ?", (ticker,)).fetchall()
+        return [r[0] for r in rows]
 
     # --- Last seen report ---
 
@@ -67,6 +102,82 @@ class Database:
             (record.ticker, record.period, record.seen_at.isoformat()),
         )
         self._conn.commit()
+
+    # --- Verdict log ---
+
+    def add_verdict(self, entry: VerdictLogEntry) -> None:
+        """Idempotent per (ticker, quarter): re-running the same quarter
+        updates the existing row rather than creating a duplicate, so the
+        new-quarter detector's "fires exactly once per ticker per quarter"
+        guarantee holds even if a manual trigger re-runs a known quarter."""
+
+        self._conn.execute(
+            """INSERT INTO verdict_log (ticker, quarter, verdict, direction, percentile, delivered_at, opened, time_to_verdict)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(ticker, quarter) DO UPDATE SET
+                   verdict=excluded.verdict,
+                   direction=excluded.direction,
+                   percentile=excluded.percentile,
+                   delivered_at=excluded.delivered_at,
+                   opened=excluded.opened,
+                   time_to_verdict=excluded.time_to_verdict""",
+            (
+                entry.ticker,
+                entry.quarter,
+                entry.verdict,
+                entry.direction,
+                entry.percentile,
+                entry.delivered_at.isoformat() if entry.delivered_at else None,
+                int(entry.opened),
+                entry.time_to_verdict
+            )
+        )
+        self._conn.commit()
+
+    def mark_opened(self, ticker: str, quarter: str) -> None:
+        self._conn.execute(
+            "UPDATE verdict_log SET opened = 1 WHERE ticker = ? AND quarter = ?", (ticker, quarter)
+        )
+        self._conn.commit()
+
+    def get_verdict(self, ticker: str, quarter: str) -> VerdictLogEntry | None:
+        row = self._conn.execute(
+            """SELECT ticker, quarter, verdict, direction, percentile, delivered_at, opened, time_to_verdict
+               FROM verdict_log WHERE ticker = ? AND quarter = ?""",
+            (ticker, quarter)
+        ).fetchone()
+        if row is None: return None
+        return self._row_to_verdict(row)
+
+    def latest_verdict(self, ticker: str) -> VerdictLogEntry | None:
+        row = self._conn.execute(
+            """SELECT ticker, quarter, verdict, direction, percentile, delivered_at, opened, time_to_verdict
+               FROM verdict_log WHERE ticker = ? ORDER BY id DESC LIMIT 1""",
+            (ticker,)
+        ).fetchone()
+        if row is None: return None
+        return self._row_to_verdict(row)
+
+    def recent_verdicts(self, limit: int = 10) -> list[VerdictLogEntry]:
+        rows = self._conn.execute(
+            """SELECT ticker, quarter, verdict, direction, percentile, delivered_at, opened, time_to_verdict
+               FROM verdict_log ORDER BY id DESC LIMIT ?""",
+            (limit,)
+        ).fetchall()
+        return [self._row_to_verdict(r) for r in rows]
+
+    @staticmethod
+    def _row_to_verdict(row) -> VerdictLogEntry:
+        return VerdictLogEntry(
+            ticker=row[0],
+            quarter=row[1],
+            verdict=row[2],
+            direction=row[3],
+            percentile=row[4],
+            delivered_at=datetime.fromisoformat(row[5]) if row[5] else None,
+            opened=bool(row[6]),
+            time_to_verdict=row[7],
+        )
 
     def close(self) -> None:
         self._conn.close()

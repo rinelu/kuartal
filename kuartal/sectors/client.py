@@ -15,13 +15,17 @@ import httpx
 class SectorsAPIError(RuntimeError):
     """Raised when the Sectors API returns a non-2xx response after all retries."""
 
+class SectorsRateLimitError(SectorsAPIError):
+    """Raised when the Sectors API returns 429 after all retries are exhausted."""
 
 class SectorsClient:
-    def __init__(self, 
-                 api_key:     str | None = None,
-                 base_url:    str | None = None,
-                 max_retries: int = 3,
-                 timeout:     float = 10.0) -> None:
+    def __init__(
+        self, 
+        api_key:     str | None = None,
+        base_url:    str | None = None,
+        max_retries: int = 3,
+        timeout:     float = 10.0
+    ) -> None:
         self.api_key     = api_key or settings.sectors_api_key
         self.base_url    = (base_url or settings.sectors_base_url).rstrip("/")
         self.max_retries = max_retries

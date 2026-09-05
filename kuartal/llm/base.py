@@ -9,6 +9,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from kuartal.pipeline.verdict import VerdictPayload
 
+class LLMProviderError(RuntimeError):
+    """Raised when a provider call fails after all retries."""
+
+class LLMRateLimitError(LLMProviderError):
+    """Raised when a provider signals a rate limit after all retries."""
+
 class LLMProvider(ABC):
     @abstractmethod
     def generate_verdict(self, payload: VerdictPayload) -> str:
