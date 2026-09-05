@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
@@ -72,6 +72,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - latest and recent verdict retrieval
   - verdict opened-state updates
 - UTC timestamp handling for persisted watchlist and verdict data.
+- Telegram delivery service with:
+  - Telegram Bot API message delivery
+  - configurable request timeout and retries
+  - exponential backoff for transient failures
+  - per-user watchlist delivery routing
+  - delivery result tracking
+- Watchlist polling scheduler with:
+  - recurring pipeline execution
+  - configured polling intervals
+  - scheduler restart backoff
+  - cycle-level error isolation and logging
 
 ### Changed
 
@@ -84,6 +95,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a deterministic verdict fallback so pipeline execution can continue without a usable LLM response.
 - Updated pipeline execution so failures for individual tickers are isolated and do not stop the remaining watchlist from processing.
 - Added explicit pipeline stage error reporting for trigger, compute, verdict, delivery, and persistence failures.
+- Added scheduled watchlist polling to continuously process configured tickers.
+- Added retry and failure handling to Telegram message delivery so transient Telegram API failures do not immediately terminate delivery.
 
 ### Testing
 
@@ -91,9 +104,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - prohibited investment-advice language
   - sentence-count limits
   - combined verdict safety checks
-
 - Added retry and fallback handling for LLM provider failures and rate limits.
 - Added pipeline failure isolation so one ticker failure does not terminate a watchlist run.
 - Added idempotent verdict persistence for the same ticker and quarter.
 - Extended storage behavior to cover multi-user watchlists and verdict history.
 - Preserved existing deterministic calculation tests and Sectors API integration tests.
+- Added coverage for Telegram delivery retry and failure handling.
+- Added scheduler execution and restart behavior coverage.
