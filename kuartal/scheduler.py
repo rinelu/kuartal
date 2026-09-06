@@ -21,6 +21,36 @@ from kuartal.storage.db import Database
 logger = logging.getLogger("kuartal.scheduler")
 logging.basicConfig(level=logging.INFO)
 
+def retry_pending_deliveries(
+    db: Database,
+    telegram_bot,
+    chat_ids: dict[str, str] | None = None,
+) -> int:
+    """
+    Retry failed verdict deliveries.
+
+    Returns the number of successfully retried deliveries.
+    """
+
+    if telegram_bot is None: return 0
+
+    succeeded = 0
+    for entry in db.pending_redeliveries():
+        try:
+            results = telegram_bot.send_to_watchers(db, entry.ticker, entry.verdict, chat_ids or {})
+        except Exception:
+            logger.exception("redelivery attempt raised unexpectedly ticker=%s quarter=%s", entry.ticker, entry.quarter)
+            continue
+
+        if any(r.status == "sent" for r in results):
+            db.mark_delivery_status(entry.ticker, entry.quarter, "sent", datetime.now(timezone.utc))
+            succeeded += 1
+            logger.info("redelivery succeeded ticker=%s quarter=%s", entry.ticker, entry.quarter)
+        else:
+            logger.warning("redelivery still failing ticker=%s quarter=%s", entry.ticker, entry.quarter)
+
+    return succeeded
+
 def run_cycle(
     db: Database,
     sectors_client: SectorsClient,
@@ -34,6 +64,8 @@ def run_cycle(
     including when it was checked. Used for the dashboard's time-to-verdict
     metric.
     """
+
+    retry_pending_deliveries(db, telegram_bot, chat_ids)
 
     checked_at = datetime.now(timezone.utc).isoformat()
     results = run_watchlist(
@@ -91,6 +123,15 @@ def run_forever(
         time.sleep(interval)
 
 if __name__ == "__main__":
+    from kuartal.bootstrap import build_all
+
     _db = Database()
     _client = SectorsClient()
-    run_forever(db=_db, sectors_client=_client)
+    _llm_primary, _llm_fallback, _telegram_bot = build_all()
+    run_forever(
+        db=_db,
+        sectors_client=_client,
+        llm_primary=_llm_primary,
+        llm_fallback=_llm_fallback,
+        telegram_bot=_telegram_bot,
+    )

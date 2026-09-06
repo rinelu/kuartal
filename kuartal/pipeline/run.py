@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from kuartal.config import settings
 from kuartal.llm import service as llm_service
 from kuartal.llm.base import LLMProvider
-from kuartal.pipeline import compute
+from kuartal.pipeline import compute, status as pipeline_status
 from kuartal.pipeline.verdict import build_verdict_payload
 from kuartal.sectors import endpoints
 from kuartal.sectors.client import SectorsAPIError, SectorsClient, SectorsRateLimitError
@@ -66,44 +66,60 @@ def run_for_ticker(
     """
 
     start = time.monotonic()
+    pipeline_status.reset(ticker)
     
     # --- trigger stage -------------------------------------------------
+    pipeline_status.mark(ticker, "report detected", "in_progress")
     try:
         dates = endpoints.get_quarterly_financial_dates(sectors_client, ticker)
     except (SectorsAPIError, SectorsRateLimitError) as exc:
         logger.warning("trigger stage failed ticker=%s error=%s", ticker, exc)
+        pipeline_status.mark(ticker, "report detected", "failed")
         return PipelineResult(ticker=ticker, status="error", error=StageError("trigger", str(exc)))
     
     if not dates:
+        pipeline_status.mark(ticker, "report detected", "done")
         return PipelineResult(ticker=ticker, status="stale")
 
     latest_period = dates[-1]
     last_seen     = db.get_last_seen(ticker)
     if not force and last_seen is not None and last_seen.period == latest_period:
+        pipeline_status.mark(ticker, "report detected", "done")
         return PipelineResult(ticker=ticker, status="stale")
 
+    pipeline_status.mark(ticker, "report detected", "done")
+
     # --- compute stage ---------------------------------------------------
+    pipeline_status.mark(ticker, "history read", "in_progress")
     try:
         financials     = endpoints.get_quarterly_financials(sectors_client, ticker)
         own_trend      = compute.own_trend(financials)
         margins        = compute.margin_series(financials)
         this_growth    = compute.yoy_growth(financials)
         own_avg_growth = compute.own_avg_growth_4q(financials)
+        pipeline_status.mark(ticker, "history read", "done")
 
+        pipeline_status.mark(ticker, "sector ranked", "in_progress")
         peers = endpoints.get_top_growth(sectors_client, sector)
         peer_growths = [p["growth"] for p in peers if p.get("ticker") != ticker]
         percentile, peer_count = compute.sector_percentile(this_growth or 0.0, peer_growths)
         trend_direction = compute.direction(this_growth or 0.0, own_avg_growth)
+        pipeline_status.mark(ticker, "sector ranked", "done")
 
     except (SectorsAPIError, SectorsRateLimitError) as exc:
         logger.warning("compute stage failed ticker=%s error=%s", ticker, exc)
+        pipeline_status.mark(ticker, "history read", "failed")
+        pipeline_status.mark(ticker, "sector ranked", "failed")
         return PipelineResult(ticker=ticker, status="error", error=StageError("compute", str(exc)))
 
     except Exception as exc:
         logger.exception("compute stage raised unexpectedly ticker=%s", ticker)
+        pipeline_status.mark(ticker, "history read", "failed")
+        pipeline_status.mark(ticker, "sector ranked", "failed")
         return PipelineResult(ticker=ticker, status="error", error=StageError("compute", str(exc)))
 
     # --- verdict stage -----------------------------------------------
+    pipeline_status.mark(ticker, "verdict generated", "in_progress")
     verdict_text: str
     if settings.pipeline_enable_llm and llm_primary is not None:
         try:
@@ -119,6 +135,7 @@ def run_for_ticker(
 
         except Exception as exc:
             logger.warning("verdict stage failed ticker=%s error=%s", ticker, exc)
+            pipeline_status.mark(ticker, "verdict generated", "failed")
             return PipelineResult(ticker=ticker, status="error", error=StageError("verdict", str(exc)))
     else:
         from kuartal.llm.service import _template_sentence
@@ -133,18 +150,24 @@ def run_for_ticker(
             sector_percentile=percentile,
         )
         verdict_text = f"{_template_sentence(payload)} {DISCLAIMER}"
+    pipeline_status.mark(ticker, "verdict generated", "done")
 
     # --- deliver stage -------------------------------------------------
     delivered_at: str | None = None
     opened = False
+    delivery_status = "not_attempted"
     if settings.pipeline_enable_delivery and telegram_bot is not None:
         try:
             results = telegram_bot.send_to_watchers(db, ticker, verdict_text, chat_ids or {})
             if any(r.status == "sent" for r in results):
                 delivered_at = datetime.now(timezone.utc).isoformat()
+                delivery_status = "sent"
+            elif results:
+                delivery_status = "failed"
 
         except Exception as exc:
             logger.error("deliver stage failed ticker=%s error=%s", ticker, exc)
+            delivery_status = "failed"
 
     # --- persist stage ---------------------------------------------------
     time_to_verdict_label = _elapsed_label(start)
@@ -160,6 +183,7 @@ def run_for_ticker(
                 delivered_at=datetime.fromisoformat(delivered_at) if delivered_at else None,
                 opened=opened,
                 time_to_verdict=time_to_verdict_label,
+                delivery_status=delivery_status,
             )
         )
     except Exception as exc:

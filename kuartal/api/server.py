@@ -8,10 +8,12 @@ live data.
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections import defaultdict, deque
 from typing import cast
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +21,7 @@ from fastapi.responses import JSONResponse
 
 from kuartal.api import mock_data
 from kuartal.config import settings
-from kuartal.pipeline import compute
+from kuartal.pipeline import compute, status as pipeline_status
 from kuartal.pipeline.run import run_for_ticker
 from kuartal.sectors import endpoints
 from kuartal.sectors.client import SectorsAPIError, SectorsClient
@@ -59,6 +61,17 @@ async def rate_limit_middleware(request: Request, call_next):
 
 def _get_db() -> Database:
     return Database()
+
+_BACKTEST_CORRELATION_PATH = Path(__file__).resolve().parents[2] / "backtest" / "data" / "correlation.json"
+
+def _read_backtest_correlation() -> float:
+    """Reads whatever `backtest/analyze.py` last persisted."""
+
+    try:
+        data = json.loads(_BACKTEST_CORRELATION_PATH.read_text())
+        return data.get("backtestCorrelation") or 0.0
+    except (OSError, json.JSONDecodeError):
+        return 0.0
 
 def _build_live_card(db: Database, sectors_client: SectorsClient, watch) -> dict | None:
     """Build a CompanyCard from stored state and live trend/percentile data."""
@@ -137,8 +150,7 @@ def get_watchlist(scenario: str = "default"):
             "verdict": v.verdict,
             "quarter": v.quarter,
             "sentAt":  v.delivered_at.isoformat() if v.delivered_at else ""
-        }
-        for v in db.recent_verdicts(limit=10)
+        } for v in db.recent_verdicts(limit=10)
     ]
 
     total           = len(db.list_watched_tickers())
@@ -152,13 +164,30 @@ def get_watchlist(scenario: str = "default"):
         "timeToVerdictAvg": companies[0]["timeToVerdict"] if companies else "",
         "coverageRate": coverage_rate,
         "engagementRate": engagement_rate,
-        # Not computed here - see backtest/analyze.py, which is the only
-        # place this number is allowed to come from.
-        "backtestCorrelation": 0.0,
+        # Descriptive only; never used for verdict generation. See `backtest/README.md`.
+        # Uses the latest value saved by `backtest/analyze.py`, or 0.0 if none exists.
+        "backtestCorrelation": _read_backtest_correlation(),
     }
 
     return {"companies": companies, "recentVerdicts": recent, "metrics": metrics}
 
+@app.post("/api/watchlist")
+def add_to_watchlist(ticker: str, sector: str, user: str = "default"):
+    if settings.mock_mode:
+        raise HTTPException(status_code=400, detail="Cannot modify the watchlist while MOCK_MODE=true")
+
+    db = _get_db()
+    db.add_ticker(ticker.upper(), sector, user=user)
+    return {"ticker": ticker.upper(), "sector": sector, "user": user}
+
+@app.delete("/api/watchlist/{ticker}")
+def remove_from_watchlist(ticker: str, user: str = "default"):
+    if settings.mock_mode:
+        raise HTTPException(status_code=400, detail="Cannot modify the watchlist while MOCK_MODE=true")
+
+    db = _get_db()
+    db.remove_ticker(ticker.upper(), user=user)
+    return {"ticker": ticker.upper(), "removed": True}
 
 @app.get("/api/company/{ticker}")
 def get_company(ticker: str):
@@ -200,12 +229,18 @@ def dev_rerun_pipeline(ticker: str):
     if watch is None:
         raise HTTPException(status_code=404, detail=f"{ticker} is not on the watchlist")
 
+    from kuartal.bootstrap import build_all
+
     sectors_client = SectorsClient()
+    llm_primary, llm_fallback, telegram_bot = build_all()
     result = run_for_ticker(
         ticker=watch.ticker,
         sector=watch.sector,
         db=db,
         sectors_client=sectors_client,
+        llm_primary=llm_primary,
+        llm_fallback=llm_fallback,
+        telegram_bot=telegram_bot,
         force=True
     )
 
@@ -216,6 +251,21 @@ def dev_rerun_pipeline(ticker: str):
 
     return {"ticker": ticker, "status": result.status, "card": result.card}
 
+@app.post("/api/company/{ticker}/opened")
+def mark_verdict_opened(ticker: str):
+    """Marks the latest verdict for `ticker` as opened."""
+
+    if settings.mock_mode:
+        raise HTTPException(status_code=400, detail="Cannot modify verdict state while MOCK_MODE=true")
+
+    db = _get_db()
+    ticker = ticker.upper()
+    verdict_entry = db.latest_verdict(ticker)
+    if verdict_entry is None:
+        raise HTTPException(status_code=404, detail=f"No verdict on record for {ticker}")
+
+    db.mark_opened(ticker, verdict_entry.quarter)
+    return { "ticker": ticker, "quarter": verdict_entry.quarter, "opened": True }
 
 @app.get("/api/pipeline-status/{ticker}")
 def get_pipeline_status(ticker: str):
@@ -223,7 +273,7 @@ def get_pipeline_status(ticker: str):
 
     if settings.mock_mode:
         return mock_data.mock_pipeline_status(ticker.upper())
-    raise HTTPException(status_code=501, detail="Live pipeline-status trace not wired yet - set MOCK_MODE=true")
+    return pipeline_status.get(ticker.upper())
 
 
 @app.get("/api/health")

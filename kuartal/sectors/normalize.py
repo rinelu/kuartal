@@ -8,6 +8,8 @@ so the rest of the pipeline can work with consistent data.
 from __future__ import annotations
 from typing import Any
 
+from kuartal.pipeline.compute import QuarterFinancial
+
 def normalize_ticker(raw: str) -> str:
     """Return the canonical ticker format: uppercase with no exchange suffix.
 
@@ -58,7 +60,8 @@ def normalize_quarter_label(raw: str) -> str:
 
     import re
 
-    match = re.search(r"(?P<q>[1-4])", raw)
+    anchored = re.search(r"[Qq](?P<q>[1-4])", raw)
+    match = anchored or re.search(r"(?P<q>[1-4])", raw)
     year_match = re.search(r"(?P<year>\d{4})", raw)
     if match and year_match:
         quarter = match.group("q")
@@ -67,7 +70,7 @@ def normalize_quarter_label(raw: str) -> str:
 
     return raw
 
-def normalize_financial_entry(entry: dict[str, Any]) -> dict[str, Any]:
+def normalize_financial_entry(entry: dict[str, Any]) -> QuarterFinancial:
     """
     Normalize one quarterly financials entry to the pipeline's expected shape.
 
@@ -95,7 +98,7 @@ def normalize_financial_entry(entry: dict[str, Any]) -> dict[str, Any]:
         "margin": _to_float(margin),
     }
 
-def normalize_financials(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def normalize_financials(entries: list[dict[str, Any]]) -> list[QuarterFinancial]:
     """Normalize a list of quarterly-financials entries, oldest-first."""
 
     return [normalize_financial_entry(e) for e in entries]
@@ -123,3 +126,20 @@ def normalize_growth_rankings(entries: list[dict[str, Any]]) -> list[dict[str, A
     """Normalize a list of top-growth ranking entries."""
 
     return [normalize_growth_entry(e) for e in entries]
+
+def normalize_price_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a single daily-price entry to `{date, close}`."""
+
+    date = entry.get("date") or entry.get("day") or ""
+    close = entry.get("close")
+    if close is None:
+        close = entry.get("close_price")
+    if close is None:
+        close = entry.get("closing_price")
+
+    return {"date": str(date), "close": _to_float(close) or 0.0}
+
+def normalize_daily_prices(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalize a list of daily-price entries, oldest-first."""
+
+    return [normalize_price_entry(e) for e in entries]

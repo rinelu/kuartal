@@ -32,3 +32,9 @@ class VerdictLogEntry:
     delivered_at: datetime | None
     opened: bool = False
     time_to_verdict: str = "" # e.g. "3m 40s", feeds the dashboard metric
+    delivery_status: str = "not_attempted"  # "not_attempted" | "sent" | "failed"
+
+@dataclass
+class UserChatId:
+    user: str
+    chat_id: str

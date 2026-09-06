@@ -10,6 +10,7 @@ from typing import Any
 from kuartal.pipeline.compute import QuarterFinancial
 from kuartal.sectors.client import SectorsClient
 from kuartal.sectors.normalize import (
+    normalize_daily_prices,
     normalize_financials,
     normalize_growth_rankings,
     normalize_ticker,
@@ -22,6 +23,7 @@ REQUIRED_FIELDS = {
     "quarterly_financials":      {"financials"},
     "top_growth":                {"companies"},
     "company_report":            {"ticker", "sector"},
+    "daily_prices":              {"prices"},
 }
 
 def get_quarterly_financial_dates(client: SectorsClient, ticker: str) -> list[str]:
@@ -46,3 +48,24 @@ def get_company_report(client: SectorsClient, ticker: str) -> dict[str, Any]:
     """Report-card display context (name, sector, overview, valuation)."""
 
     return client.get(f"/company/report/{normalize_ticker(ticker)}/", params={ "sections": "overview,valuation" })
+
+def get_daily_prices(
+    client: SectorsClient,
+    ticker: str,
+    start: str | None = None,
+    end: str | None = None,
+) -> list[dict[str, Any]]:
+    """Backtest-only input: fetches daily closing prices for ticker.
+
+    Not used by the live pipeline. It exists only for backtest/data_fetch.py
+    to compare quarterly financials with subsequent price performance.
+
+    `start` and `end` are optional YYYY-MM-DD bounds.
+    """
+
+    params: dict[str, Any] = {}
+    if start: params["start"] = start
+    if end:   params["end"]   = end
+
+    data = client.get(f"/company/daily-price/{normalize_ticker(ticker)}/", params=params or None)
+    return normalize_daily_prices(data.get("prices", []))

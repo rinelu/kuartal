@@ -81,12 +81,19 @@ class TelegramBot:
             error=last_error,
         )
 
-    def send_to_watchers(self, db, ticker: str, text: str, chat_ids: dict[str, str]) -> list[DeliveryResult]:
-        """Send `text` to every user watching `ticker`."""
+    def send_to_watchers(
+        self, db, ticker: str, text: str, chat_ids: dict[str, str] | None = None
+    ) -> list[DeliveryResult]:
+        """Send `text` to every user watching `ticker`.
 
+        `chat_ids` optionally maps user -> Telegram chat id, overriding the
+        persisted `db.get_chat_id(user)` lookup for this call only.
+        """
+
+        chat_ids = chat_ids or {}
         results: list[DeliveryResult] = []
         for user in db.list_users_for_ticker(ticker):
-            chat_id = chat_ids.get(user) or settings.telegram_chat_id
+            chat_id = chat_ids.get(user) or db.get_chat_id(user) or settings.telegram_chat_id
             if not chat_id:
                 logger.warning("No chat id configured for user=%s, skipping delivery", user)
                 results.append(DeliveryResult(channel="Telegram", chat_id="", status="failed", sent_at=None, error="no chat id configured"))
