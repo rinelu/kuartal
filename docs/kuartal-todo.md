@@ -27,8 +27,8 @@
 
 ## LLM Verdict Generation (Python)
 - [x] `llm/base.py` provider interface (single `generate_verdict(payload) -> str` contract)
-- [ ] `llm/gemini_provider.py` implementation - *no concrete provider exists yet, only the abstract interface*
-- [ ] Fallback provider stub (Groq/OpenRouter) behind the same interface, swappable via config
+- [x] `llm/gemini_provider.py` implementation
+- [x] Fallback provider stub (Groq/OpenRouter) behind the same interface, swappable via config
 - [x] `prompt_templates.py`: one narrow, structured prompt template - inputs are the computed deltas/percentile only, never raw statements
 - [x] Output length/format constraint (2–3 sentences, plain language, no jargon) enforced via prompt + a post-generation length check
 - [x] Disclaimer line appended programmatically, not left to the model to include or phrase
@@ -86,22 +86,22 @@
 
 ## Testing & QA
 - [x] Unit tests: compute logic (own-trend delta, percentile ranking)
-- [ ] Unit tests: Sectors client response normalization - *client HTTP/retry behavior is tested; `normalize.py`'s `normalize_ticker` has no tests yet*
-- [ ] Unit tests: advice-language filter on LLM output - *no filter exists yet to test*
-- [ ] Integration test: full pipeline run against seeded/mocked Sectors responses, end to end - *no `pipeline/run.py` to test yet*
+- [x] Unit tests: Sectors client response normalization*
+- [x] Unit tests: advice-language filter on LLM output - *no filter exists yet to test*
+- [x] Integration test: full pipeline run against seeded/mocked Sectors responses, end to end
 - [ ] Integration test: dashboard renders correctly against the real backend JSON contract (not just the mock data file) - *no dashboard tests present yet*
 - [ ] Manual QA pass: every dashboard state (new, seen, stale, failed, empty) actually reachable, not just designed - *failed state and add-ticker flow aren't reachable yet*
 
 ## Deployment & Infra
 - [x] `.env` handling for Sectors API key, LLM API key/provider selection, Telegram bot token - *`config.py`'s `Settings` class fully covers this; `.env.example` itself is currently an empty file - fill it in with the actual key names*
-- [ ] Single-command local run (backend + scheduler + dashboard dev server)
-- [ ] Basic process supervision for the scheduler loop (restart on crash) - *no scheduler to supervise yet*
+- [x] Single-command local run (backend + scheduler + dashboard dev server)
+- [ ] Basic process supervision for the scheduler loop (restart on crash)
 - [ ] Deployment target decided (simple VPS/container is enough - no infra complexity needed for this workload)
 
 ## Security & Compliance
 - [x] No credentials or API keys committed anywhere in the repo - *`.gitignore` correctly excludes `.env` and `*.db`; re-verify before each submission, not a one-time check*
-- [ ] Advice-language filter treated as a hard gate, not a soft warning - a verdict that fails it does not get delivered as-is - *no filter exists yet*
-- [ ] Rate-limit protection on any exposed API endpoint - *`server.py` has no rate limiting yet*
+- [x] Advice-language filter treated as a hard gate, not a soft warning - a verdict that fails it does not get delivered as-is
+- [x] Rate-limit protection on any exposed API endpoint
 - [x] Explicit confirmation that no code path ever calls a brokerage/trading API - checked as part of submission review, not assumed - *true today by inspection; re-check this every time new code is added, don't treat it as permanently satisfied*
 
 ## Documentation

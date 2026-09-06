@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Single-command local run: backend API + scheduler + dashboard dev server.
+# Usage: ./scripts/dev
+
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+PIDS=()
+
+cleanup() {
+    echo ""
+    echo "Shutting down..."
+    for pid in "${PIDS[@]}"; do
+        kill -INT "$pid" 2>/dev/null || true
+    done
+    wait 2>/dev/null || true
+}
+trap cleanup INT TERM EXIT
+
+echo "Starting Kuartal (API + scheduler) via 'kuartal serve'..."
+kuartal serve &
+PIDS+=($!)
+
+if [ -d "dashboard/node_modules" ]; then
+    echo "Starting dashboard dev server..."
+    (cd dashboard && npm run dev) &
+    PIDS+=($!)
+else
+    echo "dashboard/node_modules not found - run 'npm install' in dashboard/ first."
+    echo "Continuing without the dashboard dev server."
+fi
+
+wait
