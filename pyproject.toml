@@ -1,6 +1,6 @@
 [project]
 name = "kuartal"
-version = "0.1.0"
+version = "1.0.0"
 description = "Sector-relative quarterly earnings verdicts for IDX watchlists"
 requires-python = ">=3.11"
 dependencies = [
